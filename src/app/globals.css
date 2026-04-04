@@ -1,0 +1,55 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-surface-900 text-gray-100 antialiased;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-surface-900;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-surface-600 rounded-full;
+  }
+}
+
+@layer components {
+  .agent-card {
+    @apply bg-surface-800 border border-surface-700 rounded-xl p-5 transition-all duration-300;
+  }
+
+  .agent-card:hover {
+    @apply border-surface-600;
+  }
+
+  .status-dot {
+    @apply w-2.5 h-2.5 rounded-full inline-block;
+  }
+
+  .status-dot-idle {
+    @apply bg-gray-500;
+  }
+
+  .status-dot-working {
+    @apply bg-emerald-400 animate-pulse-slow;
+  }
+
+  .status-dot-reviewing {
+    @apply bg-amber-400 animate-pulse-slow;
+  }
+
+  .status-dot-waiting {
+    @apply bg-blue-400;
+  }
+
+  .status-dot-error {
+    @apply bg-red-400;
+  }
+}
