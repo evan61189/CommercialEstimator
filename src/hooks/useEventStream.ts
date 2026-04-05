@@ -1,59 +1,119 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { AgentEvent, AgentSnapshot, SSEInitPayload, SSEActivityPayload } from '@/lib/types';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { createClient, RealtimeChannel } from '@supabase/supabase-js';
+import { AgentEvent, AgentSnapshot } from '@/lib/types';
 
 const MAX_CLIENT_EVENTS = 200;
 
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
+function mapEventRow(row: Record<string, unknown>): AgentEvent {
+  return {
+    id: row.id as string,
+    agentRole: row.agent_role as AgentEvent['agentRole'],
+    status: row.status as AgentEvent['status'],
+    action: row.action as string,
+    category: row.category as AgentEvent['category'],
+    timestamp: row.created_at as string,
+    metadata: (row.metadata as Record<string, unknown>) || {},
+  };
+}
+
+function mapSnapshotRow(row: Record<string, unknown>): AgentSnapshot {
+  return {
+    role: row.role as AgentSnapshot['role'],
+    status: row.status as AgentSnapshot['status'],
+    currentAction: row.current_action as string | null,
+    lastActivityAt: row.last_activity_at as string | null,
+    eventCount: row.event_count as number,
+  };
+}
+
 export function useEventStream() {
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [agents, setAgents] = useState<AgentSnapshot[]>([]);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('connecting');
-  const retryDelay = useRef(1000);
-  const eventSourceRef = useRef<EventSource | null>(null);
+  const channelRef = useRef<RealtimeChannel | null>(null);
 
-  const connect = useCallback(() => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  // Fetch initial state
+  const loadInitialState = useCallback(async () => {
+    if (!supabaseUrl || !supabaseKey) {
+      setConnectionStatus('disconnected');
+      return null;
     }
 
-    setConnectionStatus('connecting');
-    const es = new EventSource('/api/events/stream');
-    eventSourceRef.current = es;
+    const supabase = createClient(supabaseUrl, supabaseKey);
 
-    es.addEventListener('init', (e: MessageEvent) => {
-      const data: SSEInitPayload = JSON.parse(e.data);
-      setAgents(data.agents);
-      setEvents(data.recentEvents.slice(-MAX_CLIENT_EVENTS));
-      setConnectionStatus('connected');
-      retryDelay.current = 1000;
-    });
+    const [eventsRes, snapshotsRes] = await Promise.all([
+      supabase
+        .from('agent_events')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(MAX_CLIENT_EVENTS),
+      supabase.from('agent_snapshots').select('*').order('role'),
+    ]);
 
-    es.addEventListener('activity', (e: MessageEvent) => {
-      const data: SSEActivityPayload = JSON.parse(e.data);
-      setEvents((prev) => [...prev.slice(-(MAX_CLIENT_EVENTS - 1)), data.event]);
-      setAgents((prev) =>
-        prev.map((a) => (a.role === data.snapshot.role ? data.snapshot : a))
-      );
-    });
+    if (eventsRes.data) {
+      setEvents(eventsRes.data.reverse().map(mapEventRow));
+    }
+    if (snapshotsRes.data) {
+      setAgents(snapshotsRes.data.map(mapSnapshotRow));
+    }
 
-    es.onerror = () => {
-      es.close();
-      setConnectionStatus('disconnected');
-      const delay = Math.min(retryDelay.current, 30000);
-      retryDelay.current = delay * 2;
-      setTimeout(connect, delay);
-    };
-  }, []);
+    return supabase;
+  }, [supabaseUrl, supabaseKey]);
 
   useEffect(() => {
-    connect();
+    let mounted = true;
+
+    async function init() {
+      const supabase = await loadInitialState();
+      if (!supabase || !mounted) return;
+
+      // Subscribe to new events via Supabase Realtime
+      const channel = supabase
+        .channel('agent-activity')
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'agent_events' },
+          (payload) => {
+            if (!mounted) return;
+            const newEvent = mapEventRow(payload.new);
+            setEvents((prev) => [...prev.slice(-(MAX_CLIENT_EVENTS - 1)), newEvent]);
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'agent_snapshots' },
+          (payload) => {
+            if (!mounted) return;
+            const updated = mapSnapshotRow(payload.new);
+            setAgents((prev) =>
+              prev.map((a) => (a.role === updated.role ? updated : a))
+            );
+          }
+        )
+        .subscribe((status) => {
+          if (!mounted) return;
+          if (status === 'SUBSCRIBED') setConnectionStatus('connected');
+          else if (status === 'CLOSED') setConnectionStatus('disconnected');
+          else setConnectionStatus('connecting');
+        });
+
+      channelRef.current = channel;
+    }
+
+    init();
+
     return () => {
-      eventSourceRef.current?.close();
+      mounted = false;
+      channelRef.current?.unsubscribe();
     };
-  }, [connect]);
+  }, [loadInitialState]);
 
   return { events, agents, connectionStatus };
 }

@@ -1,67 +1,26 @@
-import { eventStore } from '@/lib/event-store';
+import { NextResponse } from 'next/server';
 import { startDemo } from '@/lib/demo-events';
 
 export const dynamic = 'force-dynamic';
-export const runtime = 'nodejs';
 
-export async function GET(request: Request) {
-  // Start demo mode on first SSE connection (always on for MVP)
-  startDemo();
+/**
+ * GET /api/events/stream
+ * In demo mode, starts the simulated event generator.
+ * Real-time updates come through Supabase Realtime on the client.
+ */
+export async function GET() {
+  const demoMode = process.env.DEMO_MODE === 'true';
 
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream({
-    start(controller) {
-      // Send initial state
-      const initData = {
-        agents: eventStore.getSnapshots(),
-        recentEvents: eventStore.getEvents(50),
-      };
-      controller.enqueue(
-        encoder.encode(`event: init\ndata: ${JSON.stringify(initData)}\n\n`)
-      );
+  if (demoMode) {
+    await startDemo();
+    return NextResponse.json({
+      status: 'demo_started',
+      message: 'Demo event generator running. Events will appear via Supabase Realtime.',
+    });
+  }
 
-      // Listen for new events
-      const onEvent = (payload: unknown) => {
-        try {
-          controller.enqueue(
-            encoder.encode(`event: activity\ndata: ${JSON.stringify(payload)}\n\n`)
-          );
-        } catch {
-          // Client disconnected
-          eventStore.emitter.removeListener('event', onEvent);
-        }
-      };
-
-      eventStore.emitter.on('event', onEvent);
-
-      // Keepalive every 15s
-      const keepalive = setInterval(() => {
-        try {
-          controller.enqueue(encoder.encode(': keepalive\n\n'));
-        } catch {
-          clearInterval(keepalive);
-        }
-      }, 15000);
-
-      // Cleanup on disconnect
-      request.signal.addEventListener('abort', () => {
-        eventStore.emitter.removeListener('event', onEvent);
-        clearInterval(keepalive);
-        try {
-          controller.close();
-        } catch {
-          // Already closed
-        }
-      });
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    },
+  return NextResponse.json({
+    status: 'ok',
+    message: 'Agents push events via POST /api/events. Dashboard receives them via Supabase Realtime.',
   });
 }

@@ -4,9 +4,21 @@ import { useEventStream } from '@/hooks/useEventStream';
 import { AgentCard } from './AgentCard';
 import { ActivityFeed } from './ActivityFeed';
 import { ConnectionStatus } from './ConnectionStatus';
+import { AGENTS } from '@/lib/agents';
+import { AgentSnapshot } from '@/lib/types';
+
+// Default snapshots when Supabase isn't connected yet
+const DEFAULT_SNAPSHOTS: AgentSnapshot[] = AGENTS.map((a) => ({
+  role: a.role,
+  status: 'idle' as const,
+  currentAction: null,
+  lastActivityAt: null,
+  eventCount: 0,
+}));
 
 export function Dashboard() {
   const { events, agents, connectionStatus } = useEventStream();
+  const displayAgents = agents.length > 0 ? agents : DEFAULT_SNAPSHOTS;
 
   return (
     <div className="min-h-screen bg-surface-900">
@@ -24,7 +36,7 @@ export function Dashboard() {
           <div className="flex items-center gap-4">
             <ConnectionStatus status={connectionStatus} />
             <div className="text-[11px] text-gray-500 border-l border-surface-700 pl-4">
-              {agents.filter((a) => a.status === 'working' || a.status === 'reviewing').length} / {agents.length} active
+              {displayAgents.filter((a) => a.status === 'working' || a.status === 'reviewing').length} / {displayAgents.length} active
             </div>
           </div>
         </div>
@@ -32,11 +44,11 @@ export function Dashboard() {
 
       <main className="max-w-[1400px] mx-auto px-6 py-6 space-y-6">
         {/* Stats Bar */}
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {[
-            { label: 'Total Actions', value: agents.reduce((s, a) => s + a.eventCount, 0) },
-            { label: 'AI Roles', value: agents.length },
-            { label: 'Active Now', value: agents.filter((a) => a.status !== 'idle').length },
+            { label: 'Total Actions', value: displayAgents.reduce((s, a) => s + a.eventCount, 0) },
+            { label: 'AI Roles', value: displayAgents.length },
+            { label: 'Active Now', value: displayAgents.filter((a) => a.status !== 'idle').length },
             { label: 'Events Streamed', value: events.length },
           ].map((stat) => (
             <div key={stat.label} className="bg-surface-800 border border-surface-700 rounded-lg px-4 py-3 text-center">
@@ -48,7 +60,7 @@ export function Dashboard() {
 
         {/* Agent Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-          {agents.map((snapshot) => (
+          {displayAgents.map((snapshot) => (
             <AgentCard key={snapshot.role} snapshot={snapshot} />
           ))}
         </div>

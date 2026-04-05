@@ -1,5 +1,5 @@
-import { AgentRole, AgentStatus, EventCategory, AgentEvent } from './types';
-import { eventStore } from './event-store';
+import { AgentRole, AgentStatus, EventCategory } from './types';
+import { pushEvent } from './event-store';
 
 let demoRunning = false;
 
@@ -64,44 +64,47 @@ const DEMO_ACTIONS: Record<AgentRole, DemoAction[]> = {
 
 const ROLES: AgentRole[] = ['director', 'senior-estimator', 'junior-estimator', 'procurement', 'administrator'];
 
-let eventCounter = 0;
+function pickRandom<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
 
-function generateEvent(): AgentEvent {
-  const role = ROLES[Math.floor(Math.random() * ROLES.length)];
-  const actions = DEMO_ACTIONS[role];
-  const chosen = actions[Math.floor(Math.random() * actions.length)];
-  eventCounter++;
+async function generateAndPush() {
+  const role = pickRandom(ROLES);
+  const chosen = pickRandom(DEMO_ACTIONS[role]);
 
-  return {
-    id: `demo-${Date.now()}-${eventCounter}`,
+  await pushEvent({
     agentRole: role,
     status: chosen.status,
     action: chosen.action,
     category: chosen.category,
-    timestamp: new Date().toISOString(),
-  };
+  });
 }
 
 function scheduleNext() {
   if (!demoRunning) return;
-  const delay = 3000 + Math.random() * 5000; // 3-8 seconds
-  setTimeout(() => {
+  const delay = 3000 + Math.random() * 5000;
+  setTimeout(async () => {
     if (!demoRunning) return;
-    const event = generateEvent();
-    eventStore.pushEvent(event);
+    try {
+      await generateAndPush();
+    } catch {
+      // Supabase might not be configured — silently skip
+    }
     scheduleNext();
   }, delay);
 }
 
-export function startDemo() {
+export async function startDemo() {
   if (demoRunning) return;
   demoRunning = true;
 
-  // Seed a few initial events immediately
+  // Seed initial events
   for (let i = 0; i < 8; i++) {
-    const event = generateEvent();
-    event.timestamp = new Date(Date.now() - (8 - i) * 10000).toISOString();
-    eventStore.pushEvent(event);
+    try {
+      await generateAndPush();
+    } catch {
+      break; // Supabase not available
+    }
   }
 
   scheduleNext();

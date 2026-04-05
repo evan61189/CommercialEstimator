@@ -1,67 +1,109 @@
-import { EventEmitter } from 'events';
 import { AgentEvent, AgentRole, AgentSnapshot } from './types';
-import { AGENTS } from './agents';
+import { getSupabaseServer } from './supabase';
 
-const MAX_EVENTS = 1000;
+/**
+ * Supabase-backed event store.
+ * All state persists in Postgres — works perfectly on serverless (Netlify).
+ * Real-time updates come through Supabase Realtime on the client side.
+ */
 
-export class EventStore {
-  private events: AgentEvent[] = [];
-  private snapshots: Map<AgentRole, AgentSnapshot>;
-  public emitter = new EventEmitter();
+export async function pushEvent(event: {
+  agentRole: AgentRole;
+  status: string;
+  action: string;
+  category: string;
+  metadata?: Record<string, unknown>;
+}): Promise<{ event: AgentEvent; snapshot: AgentSnapshot }> {
+  const supabase = getSupabaseServer();
 
-  constructor() {
-    this.emitter.setMaxListeners(100);
-    this.snapshots = new Map(
-      AGENTS.map((a) => [
-        a.role,
-        {
-          role: a.role,
-          status: 'idle' as const,
-          currentAction: null,
-          lastActivityAt: null,
-          eventCount: 0,
-        },
-      ])
-    );
-  }
+  // Insert event — the DB trigger auto-updates agent_snapshots
+  const { data, error } = await supabase
+    .from('agent_events')
+    .insert({
+      agent_role: event.agentRole,
+      status: event.status,
+      action: event.action,
+      category: event.category,
+      metadata: event.metadata || {},
+    })
+    .select()
+    .single();
 
-  pushEvent(event: AgentEvent): AgentSnapshot {
-    this.events.push(event);
-    if (this.events.length > MAX_EVENTS) {
-      this.events = this.events.slice(-MAX_EVENTS);
-    }
+  if (error) throw new Error(`Failed to push event: ${error.message}`);
 
-    const snapshot = this.snapshots.get(event.agentRole)!;
-    snapshot.status = event.status;
-    snapshot.currentAction = event.action;
-    snapshot.lastActivityAt = event.timestamp;
-    snapshot.eventCount += 1;
+  // Fetch updated snapshot
+  const { data: snapshot } = await supabase
+    .from('agent_snapshots')
+    .select()
+    .eq('role', event.agentRole)
+    .single();
 
-    this.emitter.emit('event', { event, snapshot: { ...snapshot } });
-    return { ...snapshot };
-  }
-
-  getEvents(limit = 50, agentRole?: AgentRole): AgentEvent[] {
-    let filtered = agentRole
-      ? this.events.filter((e) => e.agentRole === agentRole)
-      : this.events;
-    return filtered.slice(-limit);
-  }
-
-  getSnapshots(): AgentSnapshot[] {
-    return Array.from(this.snapshots.values()).map((s) => ({ ...s }));
-  }
+  return {
+    event: {
+      id: data.id,
+      agentRole: data.agent_role,
+      status: data.status,
+      action: data.action,
+      category: data.category,
+      timestamp: data.created_at,
+      metadata: data.metadata,
+    },
+    snapshot: snapshot ? {
+      role: snapshot.role,
+      status: snapshot.status,
+      currentAction: snapshot.current_action,
+      lastActivityAt: snapshot.last_activity_at,
+      eventCount: snapshot.event_count,
+    } : {
+      role: event.agentRole,
+      status: event.status,
+      currentAction: event.action,
+      lastActivityAt: new Date().toISOString(),
+      eventCount: 1,
+    },
+  };
 }
 
-// Singleton — survives hot reload in dev
-const globalKey = '__eventStore';
+export async function getEvents(limit = 50, agentRole?: AgentRole): Promise<AgentEvent[]> {
+  const supabase = getSupabaseServer();
+  let query = supabase
+    .from('agent_events')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(limit);
 
-function getStore(): EventStore {
-  const g = globalThis as Record<string, unknown>;
-  if (!g[globalKey]) {
-    g[globalKey] = new EventStore();
+  if (agentRole) {
+    query = query.eq('agent_role', agentRole);
   }
-  return g[globalKey] as EventStore;
+
+  const { data, error } = await query;
+  if (error) throw new Error(`Failed to fetch events: ${error.message}`);
+
+  return (data || []).reverse().map((row) => ({
+    id: row.id,
+    agentRole: row.agent_role,
+    status: row.status,
+    action: row.action,
+    category: row.category,
+    timestamp: row.created_at,
+    metadata: row.metadata,
+  }));
 }
 
-export const eventStore = getStore();
+export async function getSnapshots(): Promise<AgentSnapshot[]> {
+  const supabase = getSupabaseServer();
+  const { data, error } = await supabase
+    .from('agent_snapshots')
+    .select('*')
+    .order('role');
+
+  if (error) throw new Error(`Failed to fetch snapshots: ${error.message}`);
+
+  return (data || []).map((row) => ({
+    role: row.role,
+    status: row.status,
+    currentAction: row.current_action,
+    lastActivityAt: row.last_activity_at,
+    eventCount: row.event_count,
+  }));
+}

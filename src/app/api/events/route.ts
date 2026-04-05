@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { eventStore } from '@/lib/event-store';
-import { AgentEvent, AgentRole, AgentStatus, EventCategory } from '@/lib/types';
+import { pushEvent, getEvents } from '@/lib/event-store';
+import { AgentRole, AgentStatus, EventCategory } from '@/lib/types';
 import { AGENTS } from '@/lib/agents';
 
 const VALID_ROLES = new Set(AGENTS.map((a) => a.role));
@@ -21,28 +21,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'action is required' }, { status: 400 });
     }
 
-    const event: AgentEvent = {
-      id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    const result = await pushEvent({
       agentRole: agentRole as AgentRole,
       status: status as AgentStatus,
       action,
       category: (category || 'orchestration') as EventCategory,
-      timestamp: new Date().toISOString(),
       metadata,
-    };
+    });
 
-    const snapshot = eventStore.pushEvent(event);
-    return NextResponse.json({ event, snapshot }, { status: 201 });
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    return NextResponse.json(result, { status: 201 });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
 export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-  const role = searchParams.get('role') as AgentRole | null;
-  const limit = parseInt(searchParams.get('limit') || '50', 10);
+  try {
+    const { searchParams } = new URL(request.url);
+    const role = searchParams.get('role') as AgentRole | null;
+    const limit = parseInt(searchParams.get('limit') || '50', 10);
 
-  const events = eventStore.getEvents(limit, role || undefined);
-  return NextResponse.json({ events });
+    const events = await getEvents(limit, role || undefined);
+    return NextResponse.json({ events });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }
