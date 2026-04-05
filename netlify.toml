@@ -2,8 +2,32 @@
   command = "npm run build"
   publish = ".next"
 
-[functions]
-  node_bundler = "esbuild"
-
 [[plugins]]
   package = "@netlify/plugin-nextjs"
+
+# --------------------------------------------------------------------
+# Scheduled agent runners (Phase 2 — Execution Layer)
+#
+# The Director runs every 2 minutes to review any pending deliverables.
+# Each specialist runs every 15 minutes to consume its own queue.
+#
+# NOTE: Inbox polling of estimating@clipper.construction is NOT a Netlify
+# function — it runs as a Cowork scheduled task (see
+# cowork-tasks/inbox-scan-to-supabase.md) which writes inbox_messages
+# rows and enqueues jobs for the Junior Estimator runner.
+# --------------------------------------------------------------------
+
+[functions."agent-director"]
+  schedule = "*/2 * * * *"
+
+[functions."agent-senior-estimator"]
+  schedule = "*/15 * * * *"
+
+[functions."agent-junior-estimator"]
+  schedule = "*/15 * * * *"
+
+[functions."agent-procurement"]
+  schedule = "*/15 * * * *"
+
+[functions."agent-administrator"]
+  schedule = "*/15 * * * *"
