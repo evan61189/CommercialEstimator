@@ -4,6 +4,7 @@ import { useEventStream } from '@/hooks/useEventStream';
 import { AgentCard } from './AgentCard';
 import { ActivityFeed } from './ActivityFeed';
 import { ConnectionStatus } from './ConnectionStatus';
+import { WorkflowLauncher } from './WorkflowLauncher';
 import { AGENTS } from '@/lib/agents';
 import { AgentSnapshot } from '@/lib/types';
 
@@ -64,6 +65,9 @@ export function Dashboard() {
             <AgentCard key={snapshot.role} snapshot={snapshot} />
           ))}
         </div>
+
+        {/* Workflow Launcher */}
+        <WorkflowLauncher />
 
         {/* Activity Feed */}
         <div className="h-[500px]">
